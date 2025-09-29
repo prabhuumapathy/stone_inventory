@@ -58,11 +58,12 @@ export const CreateVendorForm: React.FC<Props> = ({ onSuccess, onCancel }) => {
         body: payload,
       })
     },
-    onSuccess: () => {
-      toast.success("Stone vendor created successfully")
-      queryClient.invalidateQueries({ queryKey: ["stone_vendors"] })
-      onSuccess()
-    },
+     onSuccess: (response: any) => {
+          const message = response?.message || "Updated"
+          toast.success(message)
+          queryClient.invalidateQueries({ queryKey: ["stone_vendors"] })          
+          onSuccess()
+        },    
     onError: (err: any) => {
       console.error("Failed to create stone vendor", err)
       toast.error(err?.message || "Failed to create stone vendor.")

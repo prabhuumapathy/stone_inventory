@@ -1,57 +1,6 @@
-import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import { Parser } from "json2csv"
-import { createStoneVendorWorkflow } from "../../../workflows/stone_vendor"
-import { STONE_VENDOR_MODULE } from "../../../modules/stone_vendor"
-import StoneVendorModuleService from "../../../modules/stone_vendor/service"
-
-const escapeIlikePattern = (value: string) => value.replace(/[\\%_]/g, (match) => `\\${match}`)
-
-const SORTABLE_FIELDS = [
-  "stone_vendor_id",
-  "name",
-  "vendor_code",
-  "vendor_number",
-  "city",
-  "state",
-  "country",
-  "status",
-]
-
-const DEFAULT_ORDER_BY = "stone_vendor_id"
-const DEFAULT_ORDER_DIR = "DESC"
-
-const resolveSort = (orderBy?: string, orderDir?: string) => {
-  const normalizedField = orderBy?.toLowerCase()
-  const matchedField = SORTABLE_FIELDS.find((field) => field === normalizedField) || DEFAULT_ORDER_BY
-
-  const normalizedDir = orderDir?.toLowerCase()
-  const matchedDir = normalizedDir === "asc" ? "ASC" : normalizedDir === "desc" ? "DESC" : DEFAULT_ORDER_DIR
-
-  return { field: matchedField, direction: matchedDir as "ASC" | "DESC" }
-}
-
-const buildStoneVendorFilters = (search: string) => {
-  const trimmed = search.trim()
-  if (!trimmed) {
-    return {}
-  }
-
-  const searchPattern = `%${escapeIlikePattern(trimmed)}%`
-  const orFilters: Record<string, any>[] = [
-    { name: { $ilike: searchPattern } },
-    { vendor_code: { $ilike: searchPattern } },
-    { city: { $ilike: searchPattern } },
-    { state: { $ilike: searchPattern } },
-    { country: { $ilike: searchPattern } },
-  ]
-
-  const numericSearch = Number(trimmed)
-  if (!Number.isNaN(numericSearch)) {
-    orFilters.push({ vendor_number: numericSearch })
-  }
-
-  return { $or: orFilters }
-}
+﻿import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
+import type { Express } from "express"
+import { StoneVendorAdminService } from "./stone-vendor-service"
 
 export type PostAdminCreateStoneVendorType = {
   name: string
@@ -60,14 +9,12 @@ export type PostAdminCreateStoneVendorType = {
   // add other optional fields here
 }
 
-/**
- * Create a stone vendor
- */
 export const postCreateStoneVendor = async (
   req: MedusaRequest<PostAdminCreateStoneVendorType>,
   res: MedusaResponse
 ) => {
-  await createStoneVendorWorkflow(req.scope).run({ input: req.validatedBody })
+  const service = StoneVendorAdminService.fromScope(req.scope)
+  await service.create(req.validatedBody)
 
   res.status(201).json({
     success: true,
@@ -75,28 +22,24 @@ export const postCreateStoneVendor = async (
   })
 }
 
-/**
- * Get all stone vendors (with pagination + search)
- */
 export const getStoneVendors = async (req: MedusaRequest, res: MedusaResponse) => {
-  const take = parseInt((req.query.limit as string) || "15", 10)
-  const skip = parseInt((req.query.offset as string) || "0", 10)
-  const rawSearch = (req.query.q as string) || ""
-  const orderBy = req.query.order_by as string | undefined
-  const orderDir = req.query.order_dir as string | undefined
-  const stoneVendorModuleService: StoneVendorModuleService = req.scope.resolve(
-    STONE_VENDOR_MODULE
-  )
+  const parsedTake = Number.parseInt((req.query.limit as string) ?? "", 10)
+  const parsedSkip = Number.parseInt((req.query.offset as string) ?? "", 10)
 
-  const filters = buildStoneVendorFilters(rawSearch)
-  const { field, direction } = resolveSort(orderBy, orderDir)
+  const take = Number.isFinite(parsedTake) ? parsedTake : 15
+  const skip = Number.isFinite(parsedSkip) ? parsedSkip : 0
 
-  const [stone_vendors, count] =
-    await stoneVendorModuleService.listAndCountStoneVendors(filters, {
-      skip,
-      take,
-      order: { [field]: direction },
-    })
+  const service = StoneVendorAdminService.fromScope(req.scope)
+  const [stone_vendors, count] = await service.list({
+    take,
+    skip,
+    search: (req.query.q as string) || "",
+    name: (req.query.name as string) || "",
+    vendorCode: (req.query.vendor_code as string) || "",
+    status: req.query.status as string | undefined,
+    orderBy: req.query.order_by as string | undefined,
+    orderDir: req.query.order_dir as string | undefined,
+  })
 
   res.json({
     stone_vendors,
@@ -106,25 +49,15 @@ export const getStoneVendors = async (req: MedusaRequest, res: MedusaResponse) =
   })
 }
 
-/**
- * Get a single stone vendor
- */
 export const getStoneVendor = async (req: MedusaRequest, res: MedusaResponse) => {
   const id = req.params.id
   if (!id) {
     return res.status(400).json({ message: "Invalid id" })
   }
 
-  const query = req.scope.resolve("query")
+  const service = StoneVendorAdminService.fromScope(req.scope)
+  const stone_vendor = await service.getById(id)
 
-  const { data } = await query.graph({
-    entity: "stone_vendor",
-    fields: ["*"],
-    filters: { stone_vendor_id: id },
-    pagination: { take: 1 },
-  })
-
-  const stone_vendor = Array.isArray(data) ? data[0] : undefined
   if (!stone_vendor) {
     return res.status(404).json({ message: "Stone vendor not found" })
   }
@@ -132,43 +65,101 @@ export const getStoneVendor = async (req: MedusaRequest, res: MedusaResponse) =>
   res.json({ stone_vendor })
 }
 
-/**
- * Export stone vendors to CSV
- */
 export const exportStoneVendors = async (req: MedusaRequest, res: MedusaResponse) => {
   try {
-    const stoneVendorModuleService: StoneVendorModuleService = req.scope.resolve(
-      STONE_VENDOR_MODULE
-    )
-
-    const rawSearch = (req.query.q as string) || ""
-    const orderBy = req.query.order_by as string | undefined
-    const orderDir = req.query.order_dir as string | undefined
-    const filters = buildStoneVendorFilters(rawSearch)
-    const { field, direction } = resolveSort(orderBy, orderDir)
-
-    const stone_vendors = await stoneVendorModuleService.listStoneVendors(filters, {
-      order: { [field]: direction },
+    const service = StoneVendorAdminService.fromScope(req.scope)
+    const { stoneVendors, csv } = await service.export({
+      search: (req.query.q as string) || "",
+      name: (req.query.name as string) || "",
+      vendorCode: (req.query.vendor_code as string) || "",
+      status: req.query.status as string | undefined,
+      orderBy: req.query.order_by as string | undefined,
+      orderDir: req.query.order_dir as string | undefined,
     })
 
-    if (!stone_vendors || stone_vendors.length === 0) {
+    if (!stoneVendors.length) {
       return res.status(404).json({ message: "No stone vendors found" })
     }
-
-    const fields = Object.keys(stone_vendors[0])
-    const parser = new Parser({ fields })
-    const csv = parser.parse(stone_vendors)
 
     res.header("Content-Type", "text/csv")
     res.header("Content-Disposition", `attachment; filename="stone_vendors.csv"`)
     res.send(csv)
-  } catch (err) {
-    console.error("Export Stone Vendors Error:", err)
+  } catch (error) {
+    console.error("Export Stone Vendors Error:", error)
     res.status(500).json({
       code: "export_error",
       type: "export_error",
       message: "Failed to export stone vendors",
-      error: (err as Error).message,
+      error: (error as Error).message,
     })
   }
+}
+
+export const deleteStoneVendors = async (req: MedusaRequest, res: MedusaResponse) => {
+  const { ids } = req.validatedBody as { ids: Array<number | string> }
+
+  const service = StoneVendorAdminService.fromScope(req.scope)
+
+  let result: { normalizedIds: string[]; deletedCount: number }
+  try {
+    result = await service.softDeleteByIds(ids ?? [])
+  } catch (error) {
+    console.error("Delete Stone Vendors Error:", error)
+    return res.status(500).json({
+      message: "Failed to delete stone vendors",
+      error: (error as Error).message,
+    })
+  }
+
+  if (!result.normalizedIds.length) {
+    return res.status(400).json({ message: "No valid stone vendor ids provided" })
+  }
+
+  if (!result.deletedCount) {
+    return res.status(404).json({ message: "Stone vendors not found" })
+  }
+
+  res.status(200).json({
+    success: true,
+    deleted: result.normalizedIds.length,
+    ids: result.normalizedIds,
+  })
+}
+
+export const importStoneVendors = async (req: MedusaRequest, res: MedusaResponse) => {
+  const file = (req as MedusaRequest & { file?: Express.Multer.File }).file
+
+  if (!file) {
+    return res.status(400).json({ message: "No file uploaded" })
+  }
+
+  const content = file.buffer?.toString("utf-8") ?? ""
+  if (!content.trim()) {
+    return res.status(400).json({ message: "Uploaded file is empty" })
+  }
+
+  const replaceFlag = String(((req as any).body?.replace ?? (req as any).query?.replace ?? "")).trim().toLowerCase()
+  const replaceExisting = ["true", "1", "yes", "on"].includes(replaceFlag)
+
+  const service = StoneVendorAdminService.fromScope(req.scope)
+  const summary = await service.importFromCsvContent(content, replaceExisting)
+
+  if (!summary.processed) {
+    return res.status(400).json({ message: "No data rows detected in CSV" })
+  }
+
+  const success = summary.errors.length === 0
+  const message = replaceExisting
+    ? success
+      ? "Stone vendors replaced successfully"
+      : "Stone vendors imported with some issues. Existing vendors were left untouched."
+    : success
+    ? "Stone vendors imported successfully"
+    : "Stone vendors imported with some issues"
+
+  res.status(success ? 200 : 207).json({
+    success,
+    message,
+    ...summary,
+  })
 }

@@ -1,22 +1,32 @@
 import { Container, Drawer, Toaster } from "@medusajs/ui"
+import type { DataTableRowSelectionState } from "@medusajs/ui"
 import { useState, useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { VendorTable } from "./components/VendorTable"
 import { CreateVendorForm } from "./components/CreateVendorForm"
 import { EditVendorForm } from "./components/EditVendorForm"
 import { stoneVendorsApi } from "./api"
-import type { StoneVendorsResponse } from "./types"
+import type { StoneVendorImportResponse, StoneVendorsResponse } from "./types"
+import { useResourceActions } from "../hooks/useResourceActions"
 
 const DEFAULT_LIMIT = 10
 const DEFAULT_SORT_FIELD = "stone_vendor_id" as const
 const DEFAULT_SORT_DIRECTION = "desc" as const
 
+type StatusFilterValue = "" | "active" | "inactive"
+
 export const StoneVendorPage: React.FC = () => {
   const [pagination, setPagination] = useState({ pageSize: DEFAULT_LIMIT, pageIndex: 0 })
   const [searchQuery, setSearchQuery] = useState("")
-  const [sort, setSort] = useState<{ field: string; direction: "asc" | "desc" }>(
-    { field: DEFAULT_SORT_FIELD, direction: DEFAULT_SORT_DIRECTION }
-  )
+  const [nameFilter, setNameFilter] = useState("")
+  const [vendorCodeFilter, setVendorCodeFilter] = useState("")
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("")
+  const [sort, setSort] = useState<{ field: string; direction: "asc" | "desc" }>({
+    field: DEFAULT_SORT_FIELD,
+    direction: DEFAULT_SORT_DIRECTION,
+  })
+  const [rowSelection, setRowSelection] = useState<DataTableRowSelectionState>({})
+
   const pageSize = pagination.pageSize
   const offset = useMemo(
     () => pagination.pageIndex * pagination.pageSize,
@@ -25,31 +35,29 @@ export const StoneVendorPage: React.FC = () => {
   const queryClient = useQueryClient()
 
   const sanitizedSearch = searchQuery.trim()
+  const sanitizedName = nameFilter.trim()
+  const sanitizedVendorCode = vendorCodeFilter.trim()
+  const statusParam = statusFilter || undefined
 
-  const { data, isLoading } = useQuery<StoneVendorsResponse, Error, StoneVendorsResponse>({
-    queryKey: [
-      "stone_vendors",
-      pageSize,
-      offset,
-      sanitizedSearch,
-      sort.field,
-      sort.direction,
-    ],
-    queryFn: () =>
-      stoneVendorsApi.list(
-        pageSize,
-        offset,
-        sanitizedSearch || undefined,
-        sort.field,
-        sort.direction
-      ),
-    placeholderData: (previousData) => previousData,
-  })
+  const selectedVendorIds = useMemo(() => {
+    return Object.entries(rowSelection)
+      .filter(([, value]) => Boolean(value))
+      .map(([key]) => key)
+  }, [rowSelection])
 
-  const handleExport = async () => {
+  const buildExportUrl = () => {
     const params = new URLSearchParams()
     if (sanitizedSearch) {
       params.set("q", sanitizedSearch)
+    }
+    if (sanitizedName) {
+      params.set("name", sanitizedName)
+    }
+    if (sanitizedVendorCode) {
+      params.set("vendor_code", sanitizedVendorCode)
+    }
+    if (statusParam) {
+      params.set("status", statusParam)
     }
     if (sort.field) {
       params.set("order_by", sort.field)
@@ -59,17 +67,85 @@ export const StoneVendorPage: React.FC = () => {
     }
 
     const query = params.toString()
-    const response = await fetch(`/admin/stone_vendor/export${query ? `?${query}` : ""}`, {
-      method: "GET",
-    })
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "stone_vendors.csv"
-    a.click()
-    window.URL.revokeObjectURL(url)
+    return `/admin/stone_vendor/export${query ? `?${query}` : ""}`
   }
+
+  const {
+    fileInputRef: bulkActionsFileInputRef,
+    handleExport,
+    handleImportClick,
+    handleImportFileChange,
+    handleDeleteSelected,
+    isDeleting,
+    isImporting,
+  } = useResourceActions<string, StoneVendorImportResponse>({
+    resourceName: "stone vendor",
+    resourceNamePlural: "stone vendors",
+    queryKey: ["stone_vendors"],
+    selectedIds: selectedVendorIds,
+    deleteFn: async (ids) => stoneVendorsApi.deleteMany(ids),
+    buildExportUrl,
+    onClearSelection: () => setRowSelection({}),
+    importConfig: {
+      importFn: (file, replaceExisting) => stoneVendorsApi.import(file, replaceExisting),
+      confirmMessage:
+        "Importing this file will delete existing stone vendors not present in the file. Continue?",
+      formatResult: (result) => {
+        const { success, message, created, updated, deleted, replaced, errors } = result
+        const createdLabel = created ? `created ${created}` : ""
+        const updatedLabel = updated ? `updated ${updated}` : ""
+        const deletedLabel = deleted ? `deleted ${deleted}` : ""
+        const detail = [createdLabel, updatedLabel, deletedLabel].filter(Boolean).join(", ")
+        const summary = detail ? ` (${detail})` : ""
+        const fallbackMessage = replaced
+          ? "Stone vendors replaced successfully"
+          : "Stone vendors imported successfully"
+
+        let toastType: "success" | "warning" = success ? "success" : "warning"
+        let finalMessage = (message || fallbackMessage) + summary
+
+        if (!success && errors?.length) {
+          const problemRows = errors
+            .slice(0, 5)
+            .map((err) => err.row)
+            .join(", ")
+          finalMessage += ` Problem rows: ${problemRows}${errors.length > 5 ? "..." : ""}`
+        }
+
+        return {
+          toastType,
+          message: finalMessage,
+          consoleWarnings: success ? undefined : errors,
+        }
+      },
+    },
+  })
+
+  const { data, isLoading } = useQuery<StoneVendorsResponse, Error, StoneVendorsResponse>({
+    queryKey: [
+      "stone_vendors",
+      pageSize,
+      offset,
+      sanitizedSearch,
+      sanitizedName,
+      sanitizedVendorCode,
+      statusFilter,
+      sort.field,
+      sort.direction,
+    ],
+    queryFn: () =>
+      stoneVendorsApi.list({
+        limit: pageSize,
+        offset,
+        search: sanitizedSearch || undefined,
+        orderBy: sort.field,
+        orderDir: sort.direction,
+        name: sanitizedName || undefined,
+        vendorCode: sanitizedVendorCode || undefined,
+        status: statusParam,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
 
   const handleSearchChange = (value: string) => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }))
@@ -81,11 +157,33 @@ export const StoneVendorPage: React.FC = () => {
     setSort({ field, direction })
   }
 
+  const handleNameFilterChange = (value: string) => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setNameFilter(value)
+  }
+
+  const handleVendorCodeFilterChange = (value: string) => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setVendorCodeFilter(value)
+  }
+
+  const handleStatusFilterChange = (value: string) => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setStatusFilter(value === "active" || value === "inactive" ? value : "")
+  }
+
+  const handleClearFilters = () => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+    setNameFilter("")
+    setVendorCodeFilter("")
+    setStatusFilter("")
+  }
+
   const [createOpen, setCreateOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
-  const [editId, setEditId] = useState<number | null>(null)
+  const [editId, setEditId] = useState<string | null>(null)
 
-  const openEdit = (id: number) => {
+  const openEdit = (id: string) => {
     setEditId(id)
     setEditOpen(true)
   }
@@ -93,6 +191,13 @@ export const StoneVendorPage: React.FC = () => {
   return (
     <Container className="divide-y p-0">
       <Toaster position="top-right" />
+      <input
+        ref={bulkActionsFileInputRef}
+        type="file"
+        accept=".csv"
+        style={{ display: "none" }}
+        onChange={handleImportFileChange}
+      />
       <VendorTable
         data={data?.stone_vendors ?? []}
         count={data?.count || 0}
@@ -107,6 +212,20 @@ export const StoneVendorPage: React.FC = () => {
         onEdit={openEdit}
         onAdd={() => setCreateOpen(true)}
         onExport={handleExport}
+        onImport={handleImportClick}
+        isImporting={isImporting}
+        nameFilter={nameFilter}
+        vendorCodeFilter={vendorCodeFilter}
+        statusFilter={statusFilter}
+        onNameFilterChange={handleNameFilterChange}
+        onVendorCodeFilterChange={handleVendorCodeFilterChange}
+        onStatusFilterChange={handleStatusFilterChange}
+        onClearFilters={handleClearFilters}
+        rowSelection={rowSelection}
+        onRowSelectionChange={setRowSelection}
+        selectedCount={selectedVendorIds.length}
+        onDeleteSelected={handleDeleteSelected}
+        isDeleting={isDeleting}
       />
 
       {/* Create Drawer */}

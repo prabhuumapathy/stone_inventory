@@ -1,5 +1,5 @@
 export type StoneVendor = {
-  stone_vendor_id: number
+  stone_vendor_id: string
   name: string
   vendor_code: string
   vendor_number: number
@@ -22,6 +22,22 @@ export type StoneVendorsResponse = {
   count: number
   limit: number
   offset: number
+}
+
+export type StoneVendorImportError = {
+  row: number
+  message: string
+}
+
+export type StoneVendorImportResponse = {
+  success: boolean
+  message: string
+  processed: number
+  created: number
+  updated: number
+  deleted: number
+  replaced: boolean
+  errors: StoneVendorImportError[]
 }
 
 export type StoneVendorForm = {

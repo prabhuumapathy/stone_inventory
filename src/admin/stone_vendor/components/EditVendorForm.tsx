@@ -6,7 +6,7 @@ import { FormFields } from "./FormFields"
 import type { StoneVendorForm } from "../types"
 
 interface Props {
-  id: number | null
+  id: string | null
   onClose: () => void
   onSuccess: () => void
 }

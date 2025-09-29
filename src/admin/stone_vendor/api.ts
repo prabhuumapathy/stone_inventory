@@ -1,49 +1,87 @@
 import { sdk } from "../lib/sdk"
-import type { StoneVendor, StoneVendorsResponse } from "./types"
+import type {
+  StoneVendor,
+  StoneVendorsResponse,
+  StoneVendorImportResponse,
+} from "./types"
+
+type JsonRequestInit = Omit<RequestInit, "body"> & {
+  body?: unknown
+  query?: Record<string, any>
+}
 
 /**
  * Helper to keep TS happy with body typing and JSON.
  */
-function json<T>(url: string, init?: RequestInit & { query?: Record<string, any> }): Promise<T> {
+function json<T>(url: string, init?: JsonRequestInit): Promise<T> {
   const { query, ...rest } = init || {}
   const qs = query ? "?" + new URLSearchParams(query as Record<string, string>).toString() : ""
   return sdk.client.fetch<T>(`${url}${qs}`, rest as any)
 }
 
 export const stoneVendorsApi = {
-  list: (
-    limit: number,
-    offset: number,
-    search?: string,
-    orderBy?: string,
+  list: ({
+    limit,
+    offset,
+    search,
+    orderBy,
+    orderDir,
+    name,
+    vendorCode,
+    status,
+  }: {
+    limit: number
+    offset: number
+    search?: string
+    orderBy?: string
     orderDir?: "asc" | "desc"
-  ) =>
-    json<StoneVendorsResponse>("/admin/stone_vendor", {
-      method: "GET",
-      query: {
-        limit: String(limit),
-        offset: String(offset),
-        ...(search ? { q: search } : {}),
-        ...(orderBy ? { order_by: orderBy } : {}),
-        ...(orderDir ? { order_dir: orderDir } : {}),
-      },
-    }),
+    name?: string
+    vendorCode?: string
+    status?: string
+  }) => {
+    const query: Record<string, string> = {
+      limit: String(limit),
+      offset: String(offset),
+    }
 
-  get: (id: number) =>
+    if (search) {
+      query.q = search
+    }
+    if (orderBy) {
+      query.order_by = orderBy
+    }
+    if (orderDir) {
+      query.order_dir = orderDir
+    }
+    if (name) {
+      query.name = name
+    }
+    if (vendorCode) {
+      query.vendor_code = vendorCode
+    }
+    if (status) {
+      query.status = status
+    }
+
+    return json<StoneVendorsResponse>("/admin/stone_vendor", {
+      method: "GET",
+      query,
+    })
+  },
+
+  get: (id: string) =>
     json<{ stone_vendor: StoneVendor }>(`/admin/stone_vendor/${id}`, { method: "GET" }),
 
   create: (payload: StoneVendor) =>
     json<{ stone_vendor: StoneVendor }>("/admin/stone_vendor", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: payload,
     }),
 
-  update: (id: number, payload: StoneVendor) =>
+  update: (id: string, payload: StoneVendor) =>
     json<{ stone_vendor: StoneVendor }>(`/admin/stone_vendor/${id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: payload,
     }),
 
   export: (queryParams?: Record<string, any>) =>
@@ -51,4 +89,34 @@ export const stoneVendorsApi = {
       method: "GET",
       query: queryParams,
     }),
+
+  deleteMany: (ids: Array<number | string>) =>
+    json<{ success: boolean; deleted: number; ids: string[] }>("/admin/stone_vendor", {
+      method: "DELETE",
+      body: { ids },
+    }),
+
+  import: async (file: File, replaceExisting = false) => {
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("replace", replaceExisting ? "true" : "false")
+
+    const response = await fetch("/admin/stone_vendor/import", {
+      method: "POST",
+      body: formData,
+      credentials: "same-origin",
+    })
+
+    if (!response.ok && response.status !== 207) {
+      throw response
+    }
+
+    return response.json() as Promise<StoneVendorImportResponse>
+  },
 }
+
+
+
+
+
+

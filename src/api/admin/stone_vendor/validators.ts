@@ -1,4 +1,5 @@
-import { z } from "zod"
+﻿import { z } from "zod"
+import { SORTABLE_FIELDS } from "./stone-vendor-service"
 
 export const PostAdminCreateStoneVendor = z.object({
   name: z.string(),
@@ -36,21 +37,21 @@ export const UpdateStoneVendor = z.object({
   status: z.boolean().optional(),
 })
 
-const sortableFields = [
-  "stone_vendor_id",
-  "name",
-  "vendor_code",
-  "vendor_number",
-  "city",
-  "state",
-  "country",
-  "status",
-] as const
+const sortableFields = [...SORTABLE_FIELDS] as [
+  (typeof SORTABLE_FIELDS)[number],
+  ...(typeof SORTABLE_FIELDS)[number][]
+]
 
 export const GetStoneVendorsQuery = z.object({
   q: z.string().optional(),
+  name: z.string().optional(),
+  vendor_code: z.string().optional(),
+  status: z.string().optional().transform((val) => val?.trim()),
   order_by: z.enum(sortableFields).optional(),
   order_dir: z.enum(["asc", "desc", "ASC", "DESC"]).optional(),
 })
-
-
+export const DeleteStoneVendorsBody = z.object({
+  ids: z
+    .array(z.union([z.number(), z.string().trim()]))
+    .min(1, "At least one stone vendor id is required"),
+})

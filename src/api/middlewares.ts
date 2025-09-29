@@ -1,21 +1,24 @@
-import { 
+import {
   defineMiddlewares,
   validateAndTransformBody,
   validateAndTransformQuery
 } from "@medusajs/framework/http"
-import { 
-  PostAdminCreateStoneVendor, 
-  UpdateStoneVendor, 
-  GetStoneVendorsQuery 
+import multer from "multer"
+import {
+  PostAdminCreateStoneVendor,
+  UpdateStoneVendor,
+  GetStoneVendorsQuery,
+  DeleteStoneVendorsBody
 } from "./admin/stone_vendor/validators"
 import { createFindParams } from "@medusajs/medusa/api/utils/validators"
 import { z } from "zod"
-import { 
+import {
   postCreateStoneVendor,
   getStoneVendors,
   getStoneVendor,
- 
-  exportStoneVendors
+  exportStoneVendors,
+  importStoneVendors,
+  deleteStoneVendors,
 } from "./admin/stone_vendor/controller"
 
 // Default fields returned by queries
@@ -24,6 +27,8 @@ const DEFAULTS = [
   "carat","remove_diamond","color","clarity","certificate","sort_order",
   "image_status","video_status","status",
 ] as const
+
+const upload = multer({ storage: multer.memoryStorage() })
 
 // Validation schemas
 export const GetStoneVendorsSchema = createFindParams().merge(GetStoneVendorsQuery)
@@ -54,6 +59,15 @@ export default defineMiddlewares({
       ],
     },
 
+    // Delete stone vendors
+    {
+      matcher: "/admin/stone_vendor",
+      method: "DELETE",
+      middlewares: [
+        validateAndTransformBody(DeleteStoneVendorsBody),
+        deleteStoneVendors,
+      ],
+    },
     // Get single stone vendor by ID
     {
       matcher: "/admin/stone_vendor/:id",
@@ -66,18 +80,26 @@ export default defineMiddlewares({
       ],
     },
 
-    // Update stone vendor by ID
-   
+    // Import stone vendors from CSV
+    {
+      matcher: "/admin/stone_vendor/import",
+      method: "POST",
+      middlewares: [
+        upload.single("file"),
+        importStoneVendors,
+      ],
+    },
 
     // Export stone vendors to CSV
     {
       matcher: "/admin/stone_vendor/export",
       method: "GET",
       middlewares: [
-        // Optionally validate query params for filtering
-        // validateAndTransformQuery(GetStoneVendorsSchema),
         exportStoneVendors
       ],
     },
   ],
 })
+
+
+
